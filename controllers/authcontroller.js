@@ -28,11 +28,22 @@ const register = async (req, res) => {
     // Hash de la contraseña
     const hashedPassword = await bcrypt.hash(contrasenia, 10);
 
+    let avatarBuffer = null;
+
+      // Procesar imagen si viene en la request
+    if (req.body.avatar) {
+      // Si la imagen viene en base64, convertir a Buffer
+      if (req.body.avatar.startsWith('data:image')) {
+        const base64Data = req.body.avatar.replace(/^data:image\/\w+;base64,/, '');
+        avatarBuffer = Buffer.from(base64Data, 'base64');
+      }
+    }
+
     // Insertar usuario
     const [result] = await db.execute(
-      `INSERT INTO usuarios (Nombre, Apellido_paterno, Apellido_materno, Correo, Contrasenia, Alias, telefono) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [nombre, apellido_paterno, apellido_materno, correo, hashedPassword, alias, telefono]
+      `INSERT INTO usuarios (Nombre, Apellido_paterno, Apellido_materno, Correo, Contrasenia, Alias, telefono, Avatar) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, apellido_paterno, apellido_materno, correo, hashedPassword, alias, telefono, avatarBuffer]
     );
 
     // Generar token JWT
@@ -46,10 +57,14 @@ const register = async (req, res) => {
       message: 'Usuario registrado exitosamente',
       token,
       user: {
-        id: result.insertId,
-        nombre,
-        correo,
-        alias
+        Id_usuario: result.insertId,  // ← Con mayúscula como en tu modelo Kotlin
+        Nombre: nombre,               // ← Con mayúscula
+        Apellido_paterno: apellido_paterno, // ← Con mayúscula
+        Apellido_materno: apellido_materno, // ← Con mayúscula
+        Correo: correo,               // ← Con mayúscula
+        Alias: alias,                 // ← Con mayúscula
+        telefono: telefono,           // ← minúscula
+        Avatar: avatarBuffer ? "data:image/jpeg;base64," + avatarBuffer.toString('base64') : null
       }
     });
 
