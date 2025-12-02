@@ -12,10 +12,10 @@ const router = express.Router();
 router.use(authenticateToken);
 
 // Obtener perfil del usuario actual
-router.get('/profile', getProfile);
+router.get('/profile', authenticateToken, getProfile);
 
 // Actualizar perfil
-router.put('/profile', updateProfile);
+router.put('/profile', authenticateToken, updateProfile);
 
 // Cambiar contraseña
 router.put('/change-password', changePassword);

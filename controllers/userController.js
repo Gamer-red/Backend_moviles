@@ -37,8 +37,9 @@ const getProfile = async (req, res) => {
 // Actualizar perfil de usuario
 const updateProfile = async (req, res) => {
   try {
+
+    const { nombre, apellido_paterno, apellido_materno, alias, telefono, correo, avatar } = req.body;
     const userId = req.user.userId;
-    const { nombre, apellido_paterno, apellido_materno, alias, telefono, correo } = req.body;
 
     // Validaciones
     if (!nombre) {
@@ -61,18 +62,26 @@ const updateProfile = async (req, res) => {
       }
     }
 
+    let avatarBuffer = null;
+
+    if (avatar) {
+      const base64Data = avatar.replace(/^data:image\/\w+;base64,/, '');
+      avatarBuffer = Buffer.from(base64Data, 'base64');
+    }
+
     // Actualizar usuario en la base de datos (INCLUYENDO CORREO)
-    await db.execute(
+    const [result] = await db.execute(
       `UPDATE usuarios 
-       SET Nombre = ?, Apellido_paterno = ?, Apellido_materno = ?, Alias = ?, telefono = ?, Correo = ?
+       SET Nombre = ?, Apellido_paterno = ?, Apellido_materno = ?, Alias = ?, telefono = ?, Correo = ?,
+           Avatar = COALESCE(?, Avatar)  -- Mantener el avatar actual si no se envía uno nuevo
        WHERE Id_usuario = ?`,
-      [nombre, apellido_paterno, apellido_materno, alias, telefono, correo, userId]
+      [nombre, apellido_paterno, apellido_materno, alias, telefono, correo, avatarBuffer, userId]
     );
+
 
     // Obtener el usuario actualizado
     const [users] = await db.execute(
-      `SELECT Id_usuario, Nombre, Apellido_paterno, Apellido_materno, Correo, Alias, telefono, Avatar
-       FROM usuarios WHERE Id_usuario = ?`,
+      'SELECT Id_usuario, Nombre, Apellido_paterno, Apellido_materno, Correo, Alias, telefono, Avatar FROM usuarios WHERE Id_usuario = ?',
       [userId]
     );
 
@@ -101,8 +110,6 @@ const updateProfile = async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
-
-
 // Cambiar contraseña
 const changePassword = async (req, res) => {
   try {
