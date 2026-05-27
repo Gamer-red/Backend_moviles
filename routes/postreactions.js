@@ -8,7 +8,7 @@ const {
 const router = express.Router();
 
 // Crear/actualizar reacción requiere autenticación
-router.post('/', authenticateToken, insertarReaccion);
+router.post('/insertarReaccion', authenticateToken, insertarReaccion);
 
 // Obtener reacciones puede ser público (pero con info de usuario si está autenticado)
 router.get('/post/:postId', authenticateToken, getReaccionesByPost);

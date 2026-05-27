@@ -167,7 +167,6 @@ const checkIfFavorite = async (req, res) => {
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 };
-
 module.exports = {
     addToFavorites,
     removeFromFavorites,

@@ -12,8 +12,7 @@ const responseRoutes = require('./routes/responses');
 const favoriteRoutes = require('./routes/favorites');
 const searchRoutes = require('./routes/search');
 const reactionCommentRoutes = require('./routes/reactionComments');
-
-//const postRoutes = require('./routes/posts');
+const multimediaRoutes = require('./routes/multimedia'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,6 +41,7 @@ app.use('/api/responses', responseRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/reaction-comments', reactionCommentRoutes);
+app.use('/api/multimedia',multimediaRoutes);
 app.get('/', (req, res) => {
   res.json({ message: 'API de Red Social funcionando!' });
 });

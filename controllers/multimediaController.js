@@ -100,8 +100,99 @@ const deleteMultimedia = async (req, res) => {
     }
 };
 
+const updatePostWithImages = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+    const { titulo, descripcion, imagenes } = req.body;
+
+    console.log("========== UPDATE POST WITH IMAGES ==========");
+    console.log("Post ID:", postId);
+    console.log("User ID:", userId);
+    console.log("Título:", titulo);
+    console.log("Descripción:", descripcion);
+    console.log("Imágenes recibidas:", imagenes ? imagenes.length : 0);
+
+    // Verificar que la publicación existe y pertenece al usuario
+    const [existingPosts] = await db.execute(
+      'SELECT * FROM publicaciones WHERE id_publicaciones = ? AND Id_usuario = ?',
+      [postId, userId]
+    );
+
+    if (existingPosts.length === 0) {
+      console.log("❌ Publicación no encontrada");
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    console.log("✅ Publicación encontrada");
+
+    // Actualizar título y descripción
+    await db.execute(
+      'UPDATE publicaciones SET Titulo = ?, Descripcion = ?, Fecha_modificacion = CURDATE() WHERE id_publicaciones = ?',
+      [titulo, descripcion, postId]
+    );
+
+    console.log("✅ Título y descripción actualizados");
+
+    // Eliminar imágenes antiguas
+    await db.execute('DELETE FROM multimedia WHERE Id_publicaciones = ?', [postId]);
+    console.log("✅ Imágenes antiguas eliminadas");
+
+    // Insertar nuevas imágenes
+    if (imagenes && imagenes.length > 0) {
+      for (let i = 0; i < imagenes.length; i++) {
+        const imagenBase64 = imagenes[i];
+        if (imagenBase64) {
+          const base64Data = imagenBase64.replace(/^data:image\/\w+;base64,/, '');
+          const imageBuffer = Buffer.from(base64Data, 'base64');
+          
+          await db.execute(
+            'INSERT INTO multimedia (Id_publicaciones, Imagen) VALUES (?, ?)',
+            [postId, imageBuffer]
+          );
+          console.log(`✅ Imagen ${i + 1} insertada`);
+        }
+      }
+    }
+
+    // Obtener la publicación actualizada
+    const [updatedPost] = await db.execute(
+      `SELECT p.*, u.Alias, u.Nombre 
+       FROM publicaciones p 
+       INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
+       WHERE p.id_publicaciones = ?`,
+      [postId]
+    );
+
+    // Obtener las imágenes actualizadas
+    const [imagenesDB] = await db.execute(
+      'SELECT Imagen FROM multimedia WHERE Id_publicaciones = ?',
+      [postId]
+    );
+    
+    const imagenesBase64 = imagenesDB.map(img => img.Imagen.toString('base64'));
+
+    console.log("✅ Proceso completado");
+    console.log("==========================================");
+
+    res.json({
+      message: 'Borrador actualizado exitosamente',
+      post: {
+        ...updatedPost[0],
+        imagenes: imagenesBase64
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error actualizando borrador:', error);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
+  }
+};
+
 module.exports={
     Insertmultimedia,
     getMultimediaByPost,
-    deleteMultimedia
+    deleteMultimedia,
+    updatePostWithImages
 }

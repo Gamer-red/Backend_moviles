@@ -33,7 +33,7 @@ const insertarReaccion = async (req, res) => {
         let result;
 
         if (existingReactions.length > 0) {
-            // Ya existe una reacción, actualizarla
+            // Ya existe una reacción
             const existingReaction = existingReactions[0];
             
             if (existingReaction.tipo === tipo) {
@@ -43,28 +43,45 @@ const insertarReaccion = async (req, res) => {
                     [existingReaction.id_reaccion]
                 );
                 
+                // Obtener conteos actualizados DESPUÉS de eliminar
+                const [likesCount] = await db.execute(
+                    `SELECT COUNT(*) as count FROM reacciones_publicaciones 
+                     WHERE id_publicaciones = ? AND tipo = 'me_gusta'`,
+                    [id_publicaciones]
+                );
+
+                const [dislikesCount] = await db.execute(
+                    `SELECT COUNT(*) as count FROM reacciones_publicaciones 
+                     WHERE id_publicaciones = ? AND tipo = 'no_megusta'`,
+                    [id_publicaciones]
+                );
+
                 return res.json({
                     message: 'Reacción eliminada exitosamente',
                     action: 'removed',
-                    tipo: null
+                    userReaction: null,
+                    counts: {
+                        me_gusta: likesCount[0].count,
+                        no_megusta: dislikesCount[0].count
+                    }
                 });
             } else {
                 // Diferente tipo: actualizar
-                [result] = await db.execute(
+                await db.execute(
                     'UPDATE reacciones_publicaciones SET tipo = ?, fecha = CURRENT_TIMESTAMP WHERE id_reaccion = ?',
                     [tipo, existingReaction.id_reaccion]
                 );
             }
         } else {
             // No existe reacción, crear nueva
-            [result] = await db.execute(
+            await db.execute(
                 `INSERT INTO reacciones_publicaciones (id_publicaciones, id_usuario, tipo, fecha) 
                  VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
-                [id_publicaciones, userId, tipo]  // ← ORDEN CORRECTO
+                [id_publicaciones, userId, tipo]
             );
         }
 
-        // Obtener conteos actualizados
+        // Obtener conteos actualizados (para los casos "added" y "updated")
         const [likesCount] = await db.execute(
             `SELECT COUNT(*) as count FROM reacciones_publicaciones 
              WHERE id_publicaciones = ? AND tipo = 'me_gusta'`,

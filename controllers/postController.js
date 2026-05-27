@@ -3,10 +3,10 @@ const db = require('../config/database');
 // Crear nueva publicación
 const createPost = async (req, res) => {
   try {
-    const { titulo, descripcion, borrador = false } = req.body;
+    const { titulo, descripcion, borrador = false, imagenes = [] } = req.body;
     const userId = req.user.userId;
 
-    // Validaciones básicas
+    // Validaciones
     if (!titulo || !descripcion) {
       return res.status(400).json({ error: 'Título y descripción son requeridos' });
     }
@@ -26,14 +26,47 @@ const createPost = async (req, res) => {
       [userId, titulo, descripcion, borrador ? 1 : 0]
     );
 
+    const postId = result.insertId;
+
+    // Insertar imágenes en la tabla multimedia
+    for (const imagenBase64 of imagenes) {
+      if (imagenBase64) {
+        // Limpiar el base64 (remover el prefijo data:image/...;base64,)
+        const base64Data = imagenBase64.replace(/^data:image\/\w+;base64,/, '');
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+        
+        await db.execute(
+          `INSERT INTO multimedia (Id_publicaciones, Imagen) VALUES (?, ?)`,
+          [postId, imageBuffer]
+        );
+      }
+    }
+
+    // Obtener la publicación creada
+    const [newPost] = await db.execute(
+      `SELECT p.*, u.Alias, u.Nombre 
+       FROM publicaciones p 
+       INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
+       WHERE p.id_publicaciones = ?`,
+      [postId]
+    );
+
+    // Obtener las imágenes de la publicación
+    const [imagenesDB] = await db.execute(
+      `SELECT Imagen FROM multimedia WHERE Id_publicaciones = ?`,
+      [postId]
+    );
+
+    const imagenesBase64 = imagenesDB.map(img => img.Imagen.toString('base64'));
+
     res.status(201).json({
       message: borrador ? 'Borrador guardado' : 'Publicación creada exitosamente',
-      postId: result.insertId,
+      postId: postId,
       post: {
-        id: result.insertId,
-        titulo,
-        descripcion,
-        borrador: Boolean(borrador)
+        id: newPost[0].id_publicaciones,
+        titulo: newPost[0].Titulo,
+        descripcion: newPost[0].Descripcion,
+        borrador: newPost[0].Borrador === 1
       }
     });
 
@@ -46,51 +79,54 @@ const createPost = async (req, res) => {
 // Obtener todas las publicaciones (con paginación)
 const getPosts = async (req, res) => {
   try {
-    // Convertir a números de manera segura
+    const userId = req.user.userId;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.max(1, parseInt(req.query.limit) || 10);
     const offset = (page - 1) * limit;
 
-    console.log(`Page: ${page} (${typeof page}), Limit: ${limit} (${typeof limit}), Offset: ${offset} (${typeof offset})`);
-
-    // SOLUCIÓN: Usar template literals para la consulta en lugar de parámetros
     const query = `
       SELECT p.*, u.Alias, u.Nombre 
       FROM publicaciones p 
       INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
-      WHERE p.Borrador = 0 
+      WHERE p.Borrador = 0 AND p.activo = 1
       ORDER BY p.Fecha_creacion DESC 
-      LIMIT ${limit} OFFSET ${offset}
+      LIMIT ${Number(limit)} OFFSET ${Number(offset)}
     `;
 
-    console.log('Ejecutando query:', query);
-
-    // Ejecutar sin parámetros (ya están incluidos en el query)
     const [posts] = await db.execute(query);
-
-    // Obtener conteo de likes y comentarios para cada publicación
+    
+    // Para cada publicación, obtener sus imágenes
     for (let post of posts) {
       // Contar likes
       const [likes] = await db.execute(
-        `SELECT COUNT(*) as count FROM reacciones_publicaciones 
-         WHERE id_publicaciones = ? AND tipo = 'me_gusta'`,
+        'SELECT COUNT(*) as count FROM reacciones_publicaciones WHERE id_publicaciones = ? AND tipo = "me_gusta"',
         [post.id_publicaciones]
       );
       post.likes = likes[0].count;
 
       // Contar comentarios
       const [comments] = await db.execute(
-        `SELECT COUNT(*) as count FROM comentarios 
-         WHERE Id_publicaciones = ?`,
+        'SELECT COUNT(*) as count FROM comentarios WHERE Id_publicaciones = ?',
         [post.id_publicaciones]
       );
       post.commentsCount = comments[0].count;
+
+      // Verificar si el usuario guardó esta publicación
+      const [saved] = await db.execute(
+        'SELECT id_favorito FROM favoritos WHERE id_usuario = ? AND id_publicacion = ?',
+        [userId, post.id_publicaciones]
+      );
+      post.guardado = saved.length > 0;
+
+      // Obtener imágenes
+      const [imagenes] = await db.execute(
+        'SELECT Imagen FROM multimedia WHERE Id_publicaciones = ?',
+        [post.id_publicaciones]
+      );
+      post.imagenes = imagenes.map(img => img.Imagen.toString('base64'));
     }
 
-    // Obtener total para paginación
-    const [total] = await db.execute(
-      'SELECT COUNT(*) as total FROM publicaciones WHERE Borrador = 0'
-    );
+    const [total] = await db.execute('SELECT COUNT(*) as total FROM publicaciones WHERE Borrador = 0 AND activo = 1');
 
     res.json({
       posts,
@@ -104,7 +140,7 @@ const getPosts = async (req, res) => {
 
   } catch (error) {
     console.error('Error obteniendo publicaciones:', error);
-    res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
 
@@ -158,19 +194,33 @@ const getPostById = async (req, res) => {
 const getMyPosts = async (req, res) => {
   try {
     const userId = Number(req.user.userId);
-    const borrador = req.query.borrador ? 1 : 0;
+    const borrador = req.query.borrador !== undefined ? parseInt(req.query.borrador) : null;
 
-    let query = `SELECT p.* FROM publicaciones p WHERE p.Id_usuario = ?`;
+    let query = `
+      SELECT p.*, u.Alias, u.Nombre 
+      FROM publicaciones p 
+      INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
+      WHERE p.Id_usuario = ? AND p.activo = 1
+    `;
     let params = [userId];
 
-    if (borrador !== undefined) {
+    if (borrador !== null) {
       query += ' AND p.Borrador = ?';
-      params.push(borrador ? 1 : 0);
+      params.push(borrador);
     }
 
     query += ' ORDER BY p.Fecha_creacion DESC';
 
     const [posts] = await db.execute(query, params);
+    
+    // Para cada publicación, obtener sus imágenes
+    for (let post of posts) {
+      const [imagenesDB] = await db.execute(
+        `SELECT Imagen FROM multimedia WHERE Id_publicaciones = ?`,
+        [post.id_publicaciones]
+      );
+      post.imagenes = imagenesDB.map(img => img.Imagen.toString('base64'));
+    }
 
     res.json({ posts });
 
@@ -272,7 +322,7 @@ const deletePost = async (req, res) => {
 
     // Verificar que la publicación existe y pertenece al usuario
     const [existingPosts] = await db.execute(
-      'SELECT * FROM publicaciones WHERE id_publicaciones = ? AND Id_usuario = ?',
+      'SELECT * FROM publicaciones WHERE id_publicaciones = ? AND Id_usuario = ? AND activo = 1',
       [postId, userId]
     );
 
@@ -282,9 +332,9 @@ const deletePost = async (req, res) => {
       });
     }
 
-    // Eliminar la publicación (las foreign keys con CASCADE eliminarán automáticamente comentarios, likes, etc.)
+    // Soft delete: solo actualizar el campo activo
     await db.execute(
-      'DELETE FROM publicaciones WHERE id_publicaciones = ? AND Id_usuario = ?',
+      'UPDATE publicaciones SET activo = 0 WHERE id_publicaciones = ? AND Id_usuario = ?',
       [postId, userId]
     );
 
@@ -295,16 +345,127 @@ const deletePost = async (req, res) => {
     
   } catch (error) {
     console.error('Error eliminando publicación:', error);
-    
-    // Manejar error de foreign key constraint
-    if (error.code === 'ER_ROW_IS_REFERENCED_2') {
-      return res.status(400).json({ 
-        error: 'No se puede eliminar la publicación porque tiene comentarios o reacciones asociadas' 
-      });
-    }
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 };
+
+const getDrafts = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    const [drafts] = await db.execute(
+      `SELECT p.*, u.Alias, u.Nombre 
+       FROM publicaciones p 
+       INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
+       WHERE p.Id_usuario = ? AND p.Borrador = 1 AND p.activo = 1
+       ORDER BY p.Fecha_creacion DESC`,
+      [userId]
+    );
+    
+    // Para cada borrador, obtener sus imágenes
+    for (let draft of drafts) {
+      const [imagenesDB] = await db.execute(
+        `SELECT Imagen FROM multimedia WHERE Id_publicaciones = ?`,
+        [draft.id_publicaciones]
+      );
+      draft.imagenes = imagenesDB.map(img => img.Imagen.toString('base64'));
+    }
+    
+    res.json({ drafts });
+  } catch (error) {
+    console.error('Error obteniendo borradores:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+};
+
+// En tu postController.js
+const publishPost = async (req, res) => {
+    try {
+        const postId = req.params.id;
+        const userId = req.user.userId;
+
+        // Verificar que el borrador existe y pertenece al usuario
+        const [existingPosts] = await db.execute(
+            'SELECT * FROM publicaciones WHERE id_publicaciones = ? AND Id_usuario = ? AND Borrador = 1',
+            [postId, userId]
+        );
+
+        if (existingPosts.length === 0) {
+            return res.status(404).json({ 
+                error: 'Borrador no encontrado o ya está publicado' 
+            });
+        }
+
+        // Actualizar: cambiar Borrador a 0
+        await db.execute(
+            `UPDATE publicaciones 
+             SET Borrador = 0, Fecha_creacion = CURDATE(), Fecha_modificacion = CURDATE()
+             WHERE id_publicaciones = ?`,
+            [postId]
+        );
+
+        // Obtener la publicación actualizada
+        const [updatedPosts] = await db.execute(
+            `SELECT p.*, u.Alias, u.Nombre 
+             FROM publicaciones p 
+             INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario 
+             WHERE p.id_publicaciones = ?`,
+            [postId]
+        );
+
+        res.json({
+            message: 'Borrador publicado exitosamente',
+            post: updatedPosts[0]
+        });
+
+    } catch (error) {
+        console.error('Error publicando borrador:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+};
+
+// En postController.js
+const getFavorites = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        const [favorites] = await db.execute(
+          `SELECT p.*, u.Alias, u.Nombre 
+          FROM favoritos f
+          INNER JOIN publicaciones p ON f.id_publicacion = p.id_publicaciones
+          INNER JOIN usuarios u ON p.Id_usuario = u.Id_usuario
+          WHERE f.id_usuario = ? AND p.activo = 1
+          ORDER BY f.fecha_agregado DESC`,
+          [userId]
+        );
+        
+        // Obtener conteo de likes y comentarios
+        for (let post of favorites) {
+            const [likes] = await db.execute(
+                `SELECT COUNT(*) as count FROM reacciones_publicaciones 
+                 WHERE id_publicaciones = ? AND tipo = 'me_gusta'`,
+                [post.id_publicaciones]
+            );
+            post.likes = likes[0].count;
+            
+            const [comments] = await db.execute(
+                `SELECT COUNT(*) as count FROM comentarios 
+                 WHERE Id_publicaciones = ?`,
+                [post.id_publicaciones]
+            );
+            post.commentsCount = comments[0].count;
+        }
+        
+        res.json({ favorites });
+        
+    } catch (error) {
+        console.error('Error obteniendo favoritos:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+};
+
+
+// En las rutas (posts.js)
 
 module.exports = {
   createPost,
@@ -312,5 +473,8 @@ module.exports = {
   getPostById,
   getMyPosts,
   updatePost,
-  deletePost
+  deletePost,
+  getDrafts,
+  publishPost,
+  getFavorites
 };

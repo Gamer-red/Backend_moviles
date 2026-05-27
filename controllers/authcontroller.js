@@ -7,7 +7,8 @@ const register = async (req, res) => {
   try {
     const { nombre, apellido_paterno, apellido_materno, correo, contrasenia, alias, telefono } = req.body;
 
-    // Validar contraseña (mínimo 10 caracteres, mayúscula, minúscula, número)
+    console.log("📝 Procesando registro...");
+    console.log("🖼️ Avatar recibido:", req.body.avatar ? `Si (${req.body.avatar.length} chars)` : "No");
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{10,}$/;
     if (!passwordRegex.test(contrasenia)) {
       return res.status(400).json({ 
@@ -32,12 +33,24 @@ const register = async (req, res) => {
 
       // Procesar imagen si viene en la request
     if (req.body.avatar) {
-      // Si la imagen viene en base64, convertir a Buffer
-      if (req.body.avatar.startsWith('data:image')) {
-        const base64Data = req.body.avatar.replace(/^data:image\/\w+;base64,/, '');
-        avatarBuffer = Buffer.from(base64Data, 'base64');
-      }
+    console.log("🖼️ Procesando avatar...");
+    try {
+        // Si la imagen viene en base64, convertir a Buffer
+        if (req.body.avatar.startsWith('data:image')) {
+            const base64Data = req.body.avatar.replace(/^data:image\/\w+;base64,/, '');
+            avatarBuffer = Buffer.from(base64Data, 'base64');
+            console.log("✅ Avatar convertido a Buffer, tamaño:", avatarBuffer.length);
+        } else {
+            // Si no tiene el prefijo data:image, asumir que es base64 puro
+            avatarBuffer = Buffer.from(req.body.avatar, 'base64');
+            console.log("✅ Avatar convertido (base64 puro), tamaño:", avatarBuffer.length);
+        }
+    } catch (error) {
+        console.error("❌ Error al procesar avatar:", error);
     }
+} else {
+    console.log("⚠️ No se recibió avatar");
+}
 
     // Insertar usuario
     const [result] = await db.execute(
@@ -76,8 +89,16 @@ const register = async (req, res) => {
 
 // Login de usuario
 const login = async (req, res) => {
+  console.log("🔴 LLEGÓ PETICIÓN A LOGIN");  // ← LÍNEA NUEVA
+  console.log("Body recibido:", req.body);   // ← LÍNEA NUEVA
   try {
     const { correo, contrasenia } = req.body;
+
+      // === LOGS DE DEPURACIÓN ===
+    console.log("========== LOGIN DEBUG ==========");
+    console.log("1. Email recibido:", correo);
+    console.log("2. Password recibida:", contrasenia);
+    console.log("================================");
 
     // Buscar usuario
     const [users] = await db.execute(
@@ -85,15 +106,26 @@ const login = async (req, res) => {
       [correo]
     );
 
+     console.log("3. Usuarios encontrados en BD:", users.length);
+
     if (users.length === 0) {
+      console.log("❌ USUARIO NO ENCONTRADO");
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     const user = users[0];
 
+    console.log("4. Usuario encontrado:", user.Correo);
+    console.log("5. Hash almacenado en BD:", user.Contrasenia);
+
     // Verificar contraseña
     const validPassword = await bcrypt.compare(contrasenia, user.Contrasenia);
+
+     console.log("6. ¿Password válida?:", validPassword);
+
+
     if (!validPassword) {
+      console.log("❌ CONTRASEÑA INCORRECTA");
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
